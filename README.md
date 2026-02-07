@@ -67,6 +67,27 @@ geo-audit fix example.com
 geo-audit fix example.com -o ./output
 ```
 
+### Test LLM visibility
+
+```bash
+# Does ChatGPT know about your brand?
+geo-audit test "Stripe"
+
+# With industry context
+geo-audit test "Vercel" --industry "cloud hosting"
+
+# Test specific LLMs
+geo-audit test "OpenAI" --provider openai --provider google
+```
+
+Requires API keys:
+```bash
+export OPENAI_API_KEY=sk-...      # ChatGPT
+export ANTHROPIC_API_KEY=...      # Claude
+export GOOGLE_API_KEY=...         # Gemini
+export PERPLEXITY_API_KEY=...     # Perplexity
+```
+
 ### More options
 
 ```bash
@@ -139,10 +160,10 @@ LLM-friendly content patterns:
 ## Roadmap
 
 - [x] `geo-audit fix` — Auto-generate llms.txt and JSON-LD schemas
-- [ ] `geo-audit test` — Query LLMs to check if they know your brand
+- [x] `geo-audit test` — Query LLMs to check if they know your brand
 - [ ] Batch URL auditing
 - [ ] CI/CD integration (GitHub Action)
-- [ ] VS Code extension
+- [ ] PyPI publishing
 
 ## Contributing
 
