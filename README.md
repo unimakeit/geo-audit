@@ -46,28 +46,41 @@ uvx geo-audit stripe.com
 
 ## Usage
 
-### Basic audit
+### Audit a site
 
 ```bash
 geo-audit example.com
+# or explicitly:
+geo-audit scan example.com
 ```
 
-### Show all findings (not just issues)
+### Generate fixes (llms.txt + JSON-LD)
 
 ```bash
+# Preview what would be generated
+geo-audit fix example.com --print-only
+
+# Generate files in current directory
+geo-audit fix example.com
+
+# Generate to specific directory
+geo-audit fix example.com -o ./output
+```
+
+### More options
+
+```bash
+# Show all findings (not just issues)
 geo-audit example.com --verbose
-```
 
-### JSON output (for scripting)
-
-```bash
+# JSON output (for scripting)
 geo-audit example.com --json
-```
 
-### Custom timeout
+# Only generate llms.txt (no schema)
+geo-audit fix example.com --no-schema
 
-```bash
-geo-audit example.com --timeout 60
+# Only generate Organization schema
+geo-audit fix example.com --no-llms-txt --schema-type Organization
 ```
 
 ## What It Checks
@@ -125,10 +138,10 @@ LLM-friendly content patterns:
 
 ## Roadmap
 
-- [ ] `geo-audit fix` — Auto-generate llms.txt and schema.json
+- [x] `geo-audit fix` — Auto-generate llms.txt and JSON-LD schemas
 - [ ] `geo-audit test` — Query LLMs to check if they know your brand
 - [ ] Batch URL auditing
-- [ ] CI/CD integration
+- [ ] CI/CD integration (GitHub Action)
 - [ ] VS Code extension
 
 ## Contributing
