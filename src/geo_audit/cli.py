@@ -348,13 +348,211 @@ def fix(url: str, output: str | None, llms_txt: bool, schema: bool, schema_type:
     console.print()
 
 
+@cli.command()
+@click.argument("brand")
+@click.option("--industry", "-i", help="Industry for context (e.g., 'cloud hosting', 'AI tools')")
+@click.option("--product", "-p", help="Specific product name to test")
+@click.option("--provider", "-P", multiple=True, 
+              type=click.Choice(["openai", "anthropic", "google", "perplexity"]),
+              help="Specific provider(s) to test (default: all configured)")
+@click.option("--verbose", "-v", is_flag=True, help="Show full responses")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON")
+def test(brand: str, industry: str | None, product: str | None, 
+         provider: tuple[str, ...], verbose: bool, json_output: bool):
+    """Test if LLMs know about your brand.
+    
+    \b
+    Examples:
+        geo-audit test "Stripe"
+        geo-audit test "Vercel" --industry "cloud hosting"
+        geo-audit test "Anthropic" --product "Claude"
+        geo-audit test "OpenAI" --provider openai --provider google
+    
+    \b
+    Required API keys (set as environment variables):
+        OPENAI_API_KEY     - For ChatGPT
+        ANTHROPIC_API_KEY  - For Claude  
+        GOOGLE_API_KEY     - For Gemini
+        PERPLEXITY_API_KEY - For Perplexity
+    """
+    from .tester import test_brand_visibility
+    from .tester.providers import (
+        get_configured_providers, get_all_providers,
+        OpenAIProvider, AnthropicProvider, GoogleProvider, PerplexityProvider
+    )
+    
+    # Get providers
+    if provider:
+        provider_map = {
+            "openai": OpenAIProvider(),
+            "anthropic": AnthropicProvider(),
+            "google": GoogleProvider(),
+            "perplexity": PerplexityProvider(),
+        }
+        providers = [provider_map[p] for p in provider]
+    else:
+        providers = get_configured_providers()
+    
+    if not providers:
+        all_providers = get_all_providers()
+        console.print("\n[yellow]⚠ No LLM providers configured![/yellow]\n")
+        console.print("Set at least one API key:\n")
+        for p in all_providers:
+            key_name = f"{p.name.upper()}_API_KEY"
+            if p.name == "Google":
+                key_name = "GOOGLE_API_KEY or GEMINI_API_KEY"
+            console.print(f"  export {key_name}=your-key-here")
+        console.print()
+        return
+    
+    # Show what we're testing
+    console.print()
+    console.print(Panel(
+        f"[bold]{brand}[/bold]" + 
+        (f"\n[dim]Industry: {industry}[/dim]" if industry else "") +
+        (f"\n[dim]Product: {product}[/dim]" if product else ""),
+        title="🧪 LLM Visibility Test",
+        border_style="magenta"
+    ))
+    
+    console.print(f"\n[dim]Testing with: {', '.join(p.name for p in providers)}[/dim]\n")
+    
+    # Run tests
+    with console.status("[bold magenta]Querying LLMs...[/bold magenta]"):
+        result = test_brand_visibility(
+            brand=brand,
+            industry=industry,
+            product=product,
+            providers=providers,
+            parallel=True
+        )
+    
+    if json_output:
+        output = {
+            "brand": result.brand,
+            "industry": result.industry,
+            "overall_visibility": round(result.overall_visibility, 1),
+            "providers_tested": result.providers_tested,
+            "results": [
+                {
+                    "provider": r.provider,
+                    "model": r.model,
+                    "mention_rate": round(r.mention_rate, 1),
+                    "avg_latency_ms": r.avg_latency_ms,
+                    "responses": [
+                        {
+                            "prompt": resp.prompt,
+                            "mentions_brand": resp.mentions_brand,
+                            "mention_context": resp.mention_context,
+                            "error": resp.error,
+                        }
+                        for resp in r.responses
+                    ]
+                }
+                for r in result.llm_results
+            ]
+        }
+        click.echo(json.dumps(output, indent=2))
+        return
+    
+    # Show overall visibility score
+    visibility = result.overall_visibility
+    vis_color = score_color(int(visibility))
+    
+    console.print(f"  Overall Visibility: ", end="")
+    console.print(print_score_bar(int(visibility), width=25))
+    console.print()
+    
+    # Results table
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Model", style="dim")
+    table.add_column("Mention Rate", justify="right")
+    table.add_column("Latency", justify="right")
+    table.add_column("Status")
+    
+    for llm_result in result.llm_results:
+        if llm_result.error_count == len(llm_result.responses):
+            # All errors
+            status = f"[red]{llm_result.responses[0].error if llm_result.responses else 'No responses'}[/red]"
+            table.add_row(
+                llm_result.provider,
+                llm_result.model,
+                "-",
+                "-",
+                status
+            )
+        else:
+            rate = llm_result.mention_rate
+            rate_color = "green" if rate >= 60 else "yellow" if rate >= 30 else "red"
+            mentions = sum(1 for r in llm_result.responses if r.mentions_brand)
+            total = len(llm_result.responses)
+            
+            table.add_row(
+                llm_result.provider,
+                llm_result.model,
+                f"[{rate_color}]{rate:.0f}%[/] ({mentions}/{total})",
+                f"{llm_result.avg_latency_ms}ms",
+                "[green]OK[/green]"
+            )
+    
+    console.print(table)
+    
+    # Show mention contexts
+    console.print("\n[bold]Mentions Found:[/bold]\n")
+    
+    any_mentions = False
+    for llm_result in result.llm_results:
+        for resp in llm_result.responses:
+            if resp.mentions_brand and resp.mention_context:
+                any_mentions = True
+                console.print(f"  [cyan]{llm_result.provider}[/cyan] → [dim]{resp.prompt[:50]}...[/dim]")
+                console.print(f"    [green]\"{resp.mention_context}\"[/green]")
+                console.print()
+    
+    if not any_mentions:
+        console.print("  [yellow]No direct brand mentions found in LLM responses.[/yellow]")
+        console.print("  [dim]This may indicate low brand visibility in AI systems.[/dim]")
+        console.print()
+    
+    # Verbose: show full responses
+    if verbose:
+        console.print("\n[bold]Full Responses:[/bold]\n")
+        for llm_result in result.llm_results:
+            console.print(f"[bold cyan]━━━ {llm_result.provider} ({llm_result.model}) ━━━[/bold cyan]\n")
+            for resp in llm_result.responses:
+                if resp.error:
+                    console.print(f"[red]Error: {resp.error}[/red]\n")
+                else:
+                    console.print(f"[dim]Q: {resp.prompt}[/dim]\n")
+                    console.print(resp.response[:500] + ("..." if len(resp.response) > 500 else ""))
+                    mention_icon = "✓" if resp.mentions_brand else "✗"
+                    mention_color = "green" if resp.mentions_brand else "red"
+                    console.print(f"\n[{mention_color}]{mention_icon} Mentions {brand}[/]")
+                    console.print()
+    
+    # Recommendations
+    if result.overall_visibility < 50:
+        console.print("[bold]💡 Recommendations:[/bold]\n")
+        console.print("  1. Run [cyan]geo-audit fix[/cyan] to generate llms.txt and schema")
+        console.print("  2. Ensure your brand has a Wikipedia page or strong web presence")
+        console.print("  3. Get mentioned in authoritative sources LLMs are trained on")
+        console.print("  4. Use structured data to help LLMs understand your brand")
+        console.print()
+    
+    # Footer
+    console.print("[dim]─" * 50 + "[/dim]")
+    console.print(f"[dim]geo-audit v{__version__}[/dim]")
+    console.print()
+
+
 # Convenience: allow `geo-audit URL` as shortcut for `geo-audit scan URL`
 def main():
     """Entry point that handles both `geo-audit URL` and `geo-audit scan URL`."""
     args = sys.argv[1:]
     
     # If first arg looks like a URL (not a command), insert 'scan'
-    if args and not args[0].startswith('-') and args[0] not in ['scan', 'fix', 'version', '--help', '--version']:
+    if args and not args[0].startswith('-') and args[0] not in ['scan', 'fix', 'test', 'version', '--help', '--version']:
         # Check if it looks like a URL/domain
         if '.' in args[0] or args[0] == 'localhost':
             sys.argv.insert(1, 'scan')
